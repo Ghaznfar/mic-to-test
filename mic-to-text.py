@@ -1,5 +1,3 @@
-# mic_server.py
-
 from flask import Flask, jsonify
 from flask_cors import CORS
 import whisper
@@ -8,6 +6,7 @@ import numpy as np
 import scipy.io.wavfile as wav
 import tempfile
 import threading
+import socket
 
 app = Flask(__name__)
 CORS(app)
@@ -78,4 +77,7 @@ def get_transcript():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = 5000
+    host_ip = socket.gethostbyname(socket.gethostname())
+    print(f"Mic server is running on http://{host_ip}:{port}")
+    app.run(host="0.0.0.0", port=port, debug=False)
