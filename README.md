@@ -19,9 +19,8 @@ A Flask-based microservice that records audio from your microphone and transcrib
 - Python 3.8–3.11
 - A working microphone
 - [ffmpeg](https://ffmpeg.org/download.html) (required by Whisper)
-- for linux:
-  sudo apt update
-  sudo apt install ffmpeg
+
+
 
 ---
 
@@ -34,3 +33,5 @@ cd whisper-mic-server
 
 # Install dependencies
 pip install -r requirements.txt
+sudo apt update
+sudo apt install ffmpeg
