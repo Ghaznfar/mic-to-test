@@ -1,83 +1,50 @@
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import whisper
-import sounddevice as sd
-import numpy as np
-import scipy.io.wavfile as wav
+from pydub import AudioSegment
 import tempfile
-import threading
-import socket
+import os
 
 app = Flask(__name__)
 CORS(app)
 
-# Load Whisper model once
 model = whisper.load_model("base")
 
-# Global state
-recording = False
-frames = []
-fs = 16000
-audio_file_path = None
-lock = threading.Lock()
+@app.route("/upload_audio", methods=["POST"])
+def upload_audio():
+    if 'audio' not in request.files:
+        return jsonify({"status": "error", "message": "No audio file provided"}), 400
 
-
-@app.route("/start_record", methods=["GET"])
-def start_record():
-    global recording, frames
-
-    with lock:
-        if recording:
-            return jsonify({"status": "error", "message": "Already recording"}), 400
-
-        recording = True
-        frames = []
-
-    def _record():
-        global frames
-        with sd.InputStream(samplerate=fs, channels=1, dtype='int16') as stream:
-            while recording:
-                data, _ = stream.read(1024)
-                frames.append(data)
-
-    threading.Thread(target=_record, daemon=True).start()
-    return jsonify({"status": "success", "message": "Recording started"})
-
-
-@app.route("/stop_record", methods=["GET"])
-def stop_record():
-    global recording, audio_file_path
-
-    with lock:
-        if not recording:
-            return jsonify({"status": "error", "message": "Not recording"}), 400
-
-        recording = False
-
-    audio_data = np.concatenate(frames, axis=0)
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    wav.write(tmp_file.name, fs, audio_data)
-    audio_file_path = tmp_file.name
-
-    return jsonify({"status": "success", "message": "Recording stopped", "file": audio_file_path})
-
-
-@app.route("/get_transcript", methods=["GET"])
-def get_transcript():
-    global audio_file_path
-
-    if not audio_file_path:
-        return jsonify({"status": "error", "message": "No audio recorded"}), 400
+    audio_file = request.files['audio']
 
     try:
-        result = model.transcribe(audio_file_path)
+        # Save .webm file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_input:
+            audio_file.save(temp_input.name)
+            temp_input_path = temp_input.name
+
+        # Convert webm to wav using pydub
+        audio_segment = AudioSegment.from_file(temp_input_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+            audio_segment.export(temp_wav.name, format="wav")
+            temp_wav_path = temp_wav.name
+
+        # Transcribe using Whisper
+        result = model.transcribe(temp_wav_path)
         return jsonify({"status": "success", "text": result["text"]})
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+    finally:
+        # Safe cleanup after all usage is done
+        if os.path.exists(temp_input_path):
+            try: os.remove(temp_input_path)
+            except: pass
+        if 'temp_wav_path' in locals() and os.path.exists(temp_wav_path):
+            try: os.remove(temp_wav_path)
+            except: pass
+
 
 if __name__ == "__main__":
-    port = 5000
-    host_ip = socket.gethostbyname(socket.gethostname())
-    print(f"Mic server is running on http://{host_ip}:{port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=5000)
