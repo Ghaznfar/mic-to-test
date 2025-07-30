@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Whisper Mic to Text</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding-top: 80px;
+    }
+    button {
+      font-size: 18px;
+      padding: 10px 20px;
+      margin: 10px;
+    }
+    #status {
+      margin-top: 20px;
+      font-size: 16px;
+      color: #333;
+    }
+    #transcript {
+      margin-top: 30px;
+      padding: 15px;
+      background: #f4f4f4;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+      border-radius: 8px;
+      font-size: 18px;
+      white-space: pre-wrap;
+    }
+    #language {
+      font-size: 16px;
+      margin-top: 20px;
+      padding: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎙️ Whisper Mic-to-Text</h1>
+  <label for="language">Choose Language:</label>
+  <select id="language">
+    <option value="">Auto Detect</option>
+    <option value="english">English</option>
+    <option value="urdu">Urdu</option>
+    <option value="french">French</option>
+    <option value="hindi">Hindi</option>
+    <option value="german">German</option>
+    <option value="chinese">Chinese</option>
+    <!-- Add more languages as needed -->
+  </select>
+
+  <br>
+  <button onclick="startRecording()">Start Recording</button>
+  <button onclick="stopRecording()">Stop Recording & Send</button>
+
+  <div id="status">Status: Idle</div>
+  <div id="transcript">Transcript will appear here...</div>
+
+  <script>
+    const API = "http://192.168.0.24:5000"; // Replace with your server's IP
+    let mediaRecorder;
+    let audioChunks = [];
+
+    function setStatus(text) {
+      document.getElementById("status").innerText = "Status: " + text;
+    }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.start();
+        setStatus("Recording...");
+      } catch (err) {
+        console.error("Mic error:", err);
+        setStatus("Microphone access denied.");
+      }
+    }
+
+    function stopRecording() {
+      if (!mediaRecorder || mediaRecorder.state !== "recording") {
+        setStatus("No active recording.");
+        return;
+      }
+
+      setStatus("Stopping...");
+      mediaRecorder.stop();
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('audio', blob, 'recording.webm');
+
+        const selectedLanguage = document.getElementById('language').value;
+        if (selectedLanguage) {
+          formData.append('language', selectedLanguage);
+        }
+
+        setStatus("Uploading...");
+
+        try {
+          const response = await fetch(`${API}/upload_audio`, {
+            method: 'POST',
+            body: formData
+          });
+
+          const data = await response.json();
+          if (data.status === "success") {
+            setStatus(`Transcribed (${data.language_used})`);
+            document.getElementById("transcript").innerText = data.text;
+          } else {
+            setStatus("Error: " + data.message);
+            document.getElementById("transcript").innerText = "";
+          }
+        } catch (error) {
+          console.error("Upload error:", error);
+          setStatus("Error sending audio.");
+        }
+      };
+    }
+  </script>
+</body>
+</html>
