@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Whisper Mic Upload Test</title>
+</head>
+<body>
+  <h1>Record & Transcribe Audio</h1>
+
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+  <p><strong>Status:</strong> <span id="status">Idle</span></p>
+  <p><strong>Response:</strong></p>
+  <pre id="response"></pre>
+
+  <script>
+    let mediaRecorder;
+    let recordedChunks = [];
+
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const statusText = document.getElementById("status");
+    const responseBox = document.getElementById("response");
+
+    startBtn.onclick = async () => {
+      recordedChunks = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: "audio/webm" });
+        uploadAudio(blob);
+      };
+
+      mediaRecorder.start();
+      statusText.textContent = "Recording...";
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      statusText.textContent = "Stopped";
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+
+    async function uploadAudio(blob) {
+      const formData = new FormData();
+      formData.append("audio", blob, "recording.webm");
+
+      try {
+        statusText.textContent = "Uploading...";
+        const res = await fetch("http://localhost:5000/upload_audio", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+
+        if (data.status === "success") {
+          statusText.textContent = "Transcribed";
+          responseBox.textContent = data.text;
+        } else {
+          statusText.textContent = "Error";
+          responseBox.textContent = JSON.stringify(data, null, 2);
+        }
+      } catch (e) {
+        statusText.textContent = "Failed";
+        responseBox.textContent = "Request error: " + e.message;
+      }
+    }
+  </script>
+</body>
+</html>
