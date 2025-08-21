@@ -285,7 +285,7 @@ def voices():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
-        "status": "healthy",
+        "status": "healthy_",
         "timestamp": datetime.now().isoformat(),
         "temp_files": len(os.listdir(TEMP_DIR))
     })
