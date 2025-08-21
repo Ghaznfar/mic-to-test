@@ -14,26 +14,46 @@ import edge_tts
 import atexit
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
+from werkzeug.utils import secure_filename
 
-# --- App Setup ---
+# =========================
+# App Setup & Configuration
+# =========================
 app = Flask(__name__)
 CORS(app)
 
-# --- Logging ---
+# Set the logging level to INFO for production
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("stt_tts_app")
 
-# --- Whisper Model ---
-whisper_model = whisper.load_model("base")
+# Whisper model (load once for multi-user usage)
+WHISPER_MODEL_NAME = "small"  # Change to "small", "medium", or "large" as needed
+logger.info(f"Loading Whisper model: {WHISPER_MODEL_NAME}")
+whisper_model = whisper.load_model(WHISPER_MODEL_NAME)
 
-# --- TTS Config ---
+# TTS / Temp file config
 TEMP_DIR = "temp_audio"
 os.makedirs(TEMP_DIR, exist_ok=True)
+
 MAX_TEXT_LENGTH = 5000
-CLEANUP_INTERVAL = 300
-FILE_RETENTION_TIME = 600
+CLEANUP_INTERVAL = 300  # seconds
+FILE_RETENTION_TIME = 600  # seconds
+
+# Simple per-IP rate limiting for /speak
 request_tracker = {}
 request_lock = threading.Lock()
+
+# Whisper Language Detection Helper
+def detect_language_code(wav_path: str):
+    try:
+        audio = whisper.load_audio(wav_path)
+        audio = whisper.pad_or_trim(audio)
+        mel = whisper.log_mel_spectrogram(audio).to(whisper_model.device)
+        _, probs = whisper_model.detect_language(mel)
+        lang = max(probs, key=probs.get)
+        return lang, float(probs[lang])
+    except Exception:
+        return None, None
 
 # --- Whisper Endpoint ---
 @app.route("/upload_audio", methods=["POST"])
@@ -42,28 +62,81 @@ def upload_audio():
         return jsonify({"status": "error", "message": "No audio file provided"}), 400
 
     audio_file = request.files['audio']
+    language_opt = (request.form.get("language") or "auto").strip().lower()
+    initial_prompt = request.form.get("initial_prompt") or None
+    return_segments = (request.form.get("return_segments") or "false").strip().lower() == "true"
+
+    temp_input_path = None
+    temp_wav_path = None
 
     try:
+        # Save upload securely
         with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_input:
             audio_file.save(temp_input.name)
             temp_input_path = temp_input.name
 
+        # Convert to wav
         audio_segment = AudioSegment.from_file(temp_input_path)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
             audio_segment.export(temp_wav.name, format="wav")
             temp_wav_path = temp_wav.name
 
-        result = whisper_model.transcribe(temp_wav_path)
-        return jsonify({"status": "success", "text": result["text"]})
+        # Language detection
+        detected_lang, detected_prob = (None, None)
+        lang_for_decode = None
+        if language_opt == "auto":
+            detected_lang, detected_prob = detect_language_code(temp_wav_path)
+            lang_for_decode = detected_lang
+        else:
+            lang_for_decode = language_opt
+
+        # Whisper decode
+        decode_opts = dict(
+            language=lang_for_decode,
+            task="transcribe",
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            no_speech_threshold=0.6,
+            logprob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            condition_on_previous_text=False,
+            initial_prompt=initial_prompt
+        )
+        result = whisper_model.transcribe(temp_wav_path, **decode_opts)
+
+        payload = {
+            "status": "success",
+            "text": (result.get("text") or "").strip(),
+            "language": {
+                "requested": language_opt,
+                "detected": detected_lang,
+                "detected_probability": detected_prob
+            }
+        }
+
+        if return_segments:
+            payload["segments"] = [
+                {
+                    "id": s.get("id"),
+                    "start": s.get("start"),
+                    "end": s.get("end"),
+                    "text": (s.get("text") or "").strip()
+                }
+                for s in (result.get("segments") or [])
+            ]
+
+        return jsonify(payload)
 
     except Exception as e:
+        logger.exception("Whisper transcription failed")
         return jsonify({"status": "error", "message": str(e)}), 500
 
     finally:
-        for path in [temp_input_path, 'temp_wav_path']:
-            if path in locals() and os.path.exists(locals()[path]):
-                try: os.remove(locals()[path])
-                except: pass
+        for path in [temp_input_path, temp_wav_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except:
+                    pass
 
 # --- TTS Helper Functions ---
 def is_valid_ssml(text):
@@ -148,7 +221,7 @@ def speak():
 
         valid_voices = [
             "en-US-SteffanNeural", "en-US-RogerMultilingualNeural",
-            "en-US-ChristopherNeural", "en-US-JennyNeural"
+            "en-US-ChristopherNeural", "en-US-JennyNeural","en-ZA-LeahNeural",
         ]
         if voice not in valid_voices:
             return jsonify({"error": "Invalid voice", "valid_voices": valid_voices}), 400

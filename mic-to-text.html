@@ -59,7 +59,7 @@
 
       try {
         statusText.textContent = "Uploading...";
-        const res = await fetch("http://localhost:5000/upload_audio", {
+        const res = await fetch("http://65.109.104.56:5000/upload_audio", {
           method: "POST",
           body: formData
         });
