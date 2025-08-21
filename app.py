@@ -307,5 +307,5 @@ threading.Thread(target=cleanup_thread, daemon=True).start()
 
 # --- Start ---
 if __name__ == "__main__":
-    logger.info("Merged Flask App Running on http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    logger.info("Merged Flask App Running on http://0.0.0.0:5001")
+    app.run(host="0.0.0.0", port=5001, debug=False)
